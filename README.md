@@ -1,4 +1,4 @@
-### opengwas-dbsnp-import
+## opengwas-dbsnp-import
 Build the rsid -> chr:pos mapping for OpenGWAS using dbSNP data
 
 ### Prerequisites
@@ -12,16 +12,16 @@ https://ftp.ncbi.nih.gov/snp/organisms/human_9606/database/organism_data/
 
 ### Build contig to chromosome mapping
 Generate `GCF_000001405.25.gz.csi`
-```
+```shell
 bcftools index -c GCF_000001405.25.gz
 ```
 
 Check number of records under each chromosome
-```
+```shell
 bcftools index -s GCF_000001405.25.gz > summary.txt
 ```
 
-```
+```shell
 > head summary.txt
 NC_000001.10	.	89641618
 NC_000002.11	.	96370672
@@ -67,11 +67,11 @@ NC_000024.9	Y
 ### Extract chr, pos and rsid columns
 
 Extract contig, pos and rsid columns from the VCF file
-```
+```shell
 bcftools query -f'%CHROM %POS %ID\n' GCF_000001405.25.gz > contig_pos_rsid.txt
 ```
 
-```
+```shell
 > head contig_pos_rsid.txt
 NC_000001.10 10001 rs1570391677
 NC_000001.10 10002 rs1570391692
@@ -87,10 +87,11 @@ NC_000001.10 10015 rs1570391706
 
 Replace contig with chr
 
-```
+```shell
 awk 'NR==FNR{a[$1]=$2; next} $1 in a {print a[$1], $2, $3}' chr_map.txt contig_pos_rsid.txt > chr_pos_rsid.txt
 ```
-```
+
+```shell
 > head chr_pos_rsid.txt
 1 10001 rs1570391677
 1 10002 rs1570391692
@@ -106,10 +107,11 @@ awk 'NR==FNR{a[$1]=$2; next} $1 in a {print a[$1], $2, $3}' chr_map.txt contig_p
 
 Get mapping of merged rsids
 
-```
+```shell
 gunzip -c RsMergeArch.bcp.gz | awk '{print $1, $2}' > merged.txt
 ```
-```
+
+```shell
 > head merged.txt
 34183431 10710027
 36106465 35937617
@@ -125,4 +127,31 @@ gunzip -c RsMergeArch.bcp.gz | awk '{print $1, $2}' > merged.txt
 
 e.g. rs34183431 has been merged to rs10710027, so when the users give rs34183431 they should be redirected to rs10710027
 
+### Run the script
 
+Disable Redis auto save
+```redis
+CONFIG SET save ""
+```
+
+Run the script
+```shell
+docker build -t opengwas-dbsnp-import .
+
+docker run -d \
+  --name og-dbsnp-import \
+  -v /data/opengwas-dbsnp-import:/opengwas-dbsnp-import \
+  --network opengwas-api_opengwas-ieu-db \
+  opengwas-dbsnp-import
+
+tmux
+
+docker exec og-dbsnp-import sh -c "cd opengwas-dbsnp-import && python -u dbsnp.py"
+```
+
+Save manually in Redis and resume auto save
+```redis
+BGSAVE
+
+CONFIG SET save "3600 1"
+```
