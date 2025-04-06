@@ -9,8 +9,7 @@ load_dotenv()
 
 class DBSNP:
     def __init__(self, redis_key: str):
-        _env = os.environ['ENV']
-        self.r = redis.Redis(host=os.environ['REDIS_HOST_' + _env], port=os.environ['REDIS_PORT_' + _env], password=os.environ['REDIS_PASS_' + _env], db=os.environ['REDIS_DB'])
+        self.r = redis.Redis(host=os.environ['REDIS_HOST'], port=os.environ['REDIS_PORT'], password=os.environ['REDIS_PASS'], db=os.environ['REDIS_DB'])
         self.redis_key = redis_key
         self.last_time = time.time()
 
