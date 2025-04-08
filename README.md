@@ -155,3 +155,24 @@ BGSAVE
 
 CONFIG SET save "3600 1"
 ```
+
+Results
+
+```shell
+> cat chr_pos_rsid.txt | wc -l
+1145968637
+> cat merged.txt | wc -l
+11963907
+```
+
+Current SNPs only:
+```redis
+> HLEN dbsnp_157
+1144613725
+```
+
+Including merged:
+```redis
+> HLEN dbsnp_157
+1154978118
+```
