@@ -129,9 +129,26 @@ e.g. rs34183431 has been merged to rs10710027, so when the users give rs34183431
 
 ### Run the script
 
-Disable Redis auto save
-```redis
-CONFIG SET save ""
+Set up Elasticsearch
+```shell
+docker run -d \
+  --name og-dbsnp-es \
+  -p 19200:9200 \
+  -p 19300:9300 \
+  --network opengwas-api_opengwas-ieu-db \
+  -e "discovery.type=single-node" \
+  -e "path.repo=/mnt/repo" \
+  -v /data/opengwas-dbsnp-import/elasticsearch/data:/usr/share/elasticsearch/data \
+  -v /data/opengwas-dbsnp-import/elasticsearch/logs:/usr/share/elasticsearch/logs \
+  -v /data/opengwas-dbsnp-import/elasticsearch/repo:/mnt/repo \
+  elasticsearch:7.13.4
+  
+docker run -d \
+  --name og-dbsnp-es-kibana \
+  -p 15601:5601 \
+  --network opengwas-api_opengwas-ieu-db \
+  -e ELASTICSEARCH_HOSTS=http://og-dbsnp-es:9200 \
+  kibana:7.13.4
 ```
 
 Run the script
@@ -140,21 +157,19 @@ docker build -t opengwas-dbsnp-import .
 
 docker run -d \
   --name og-dbsnp-import \
-  -v /data/opengwas-dbsnp-import:/opengwas-dbsnp-import \
   --network opengwas-api_opengwas-ieu-db \
+  -v /data/opengwas-dbsnp-import:/opengwas-dbsnp-import \
   opengwas-dbsnp-import
 
 tmux
 
-docker exec og-dbsnp-import sh -c "cd opengwas-dbsnp-import && python -u dbsnp.py"
+docker exec -it og-dbsnp-import /bin/sh
+
+cd opengwas-dbsnp-import
+
+python -u dbsnp.py 2>&1 | tee -a dbsnp.log
 ```
 
-Save manually in Redis and resume auto save
-```redis
-BGSAVE
-
-CONFIG SET save "3600 1"
-```
 
 Results
 
@@ -163,16 +178,4 @@ Results
 1145968637
 > cat merged.txt | wc -l
 11963907
-```
-
-Current SNPs only:
-```redis
-> HLEN dbsnp_157
-1144613725
-```
-
-Including merged:
-```redis
-> HLEN dbsnp_157
-1154978118
 ```
