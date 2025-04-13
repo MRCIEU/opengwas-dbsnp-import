@@ -179,3 +179,55 @@ Results
 > cat merged.txt | wc -l
 11963907
 ```
+
+```http request
+GET dbsnp-157/_flush
+
+GET dbsnp-157/_refresh
+
+GET dbsnp-157/_count
+```
+```
+{
+  "count" : 1105824027,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  }
+}
+```
+
+### Create snapshot and transfer
+
+Create repository
+```http request
+PUT _snapshot/backup
+{
+  "type": "fs",
+  "settings": {
+    "location": "/mnt/repo"
+  },
+  "compress": true
+}
+```
+
+Create snapshot
+```http request
+PUT _snapshot/backup/dbsnp-157
+{
+  "indices": ["dbsnp-157"],
+  "include_global_state": false
+}
+
+GET _snapshot/_status
+```
+
+Restore on target cluster
+```http request
+POST _snapshot/backup/dbsnp-157/_restore
+{
+  "indices": "dbsnp-157"
+}
+```
