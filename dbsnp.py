@@ -1,10 +1,14 @@
 import os
 import time
+import pickle
 
 from collections import defaultdict
+from multiprocessing import Queue, Process
 
-from elasticsearch import Elasticsearch
 from dotenv import load_dotenv
+from elasticsearch import Elasticsearch
+from elasticsearch.exceptions import SerializationError
+from retrying import retry
 
 load_dotenv()
 
@@ -17,22 +21,26 @@ class DBSNP:
         self.last_time = time.time()
 
     def create_index(self):
-        self.es.indices.create(index=self.es_index, body={
-            "settings": {
-                "number_of_replicas": 0,
-                "refresh_interval": -1
-            },
-            "mappings": {
-                "properties": {
-                    "CHR": {
-                        "type": "keyword"
-                    },
-                    "POS": {
-                        "type": "long"
+        if not self.es.indices.exists(index=self.es_index):
+            self.es.indices.create(index=self.es_index, body={
+                "settings": {
+                    "number_of_replicas": 0,
+                    "refresh_interval": -1,
+                    "index.max_result_window": 10000000
+                },
+                "mappings": {
+                    "properties": {
+                        "CHR": {
+                            "type": "keyword"
+                        },
+                        "POS": {
+                            "type": "long"
+                        }
                     }
                 }
-            }
-        })
+            })
+        else:
+            print("Using existing index")
 
     def refresh_index(self):
         self.es.indices.refresh(index=self.es_index)
@@ -44,19 +52,12 @@ class DBSNP:
             body.append(f'{{"CHR": {chrpos[0]}, "POS": {chrpos[1]}}}')
         return "\n".join(body)
 
-    def bulk_index(self, rsid_and_chrpos: dict) -> dict:
-        return self.es.bulk(request_timeout=600, index=self.es_index, body=self._build_insert_body(rsid_and_chrpos))
-
-    def _build_mget_body(self, rsids: list):
-        return {"docs": [{'_id': rsid} for rsid in rsids]}
-
-    def mget(self, rsids: list) -> dict:
-        response = self.es.mget(request_timeout=600, index=self.es_index, body=self._build_mget_body(rsids))['docs']
-        result = {}
-        for doc in response:
-            if doc['found']:
-                result[doc['_id']] = (doc['_source']['CHR'], doc['_source']['POS'])
-        return result
+    @retry(wait_fixed=10000)
+    def bulk_index(self, rsid_and_chrpos: dict):
+        try:
+            return self.es.bulk(request_timeout=600, index=self.es_index, body=self._build_insert_body(rsid_and_chrpos))
+        except SerializationError as e:
+            pass
 
     def process_chr_pos_rsid_line(self, line: str) -> tuple:
         parts = line.rstrip('\n').split()
@@ -75,9 +76,11 @@ class DBSNP:
 
 if __name__ == '__main__':
     wd = os.environ['WORKING_DIR']
-    dbsnp = DBSNP('dbsnp-157-2')
+    dbsnp = DBSNP('dbsnp-157')
     dbsnp.create_index()
     dbsnp.timer_lap()
+
+    os.makedirs(wd + '/pickle', exist_ok=True)
 
     all_new_to_old_rsids = defaultdict(list)
     with open(wd + '/merged.txt', 'r') as f:
@@ -89,52 +92,54 @@ if __name__ == '__main__':
 
     print(len(all_new_to_old_rsids), dbsnp.timer_lap(), "\n")
 
-    count = 0
-    count_old = 0
-    batch_size = 1_000_000
-    rsid_and_chrpos = {}
-    n_lines = 1145968637
-    with open(wd + '/chr_pos_rsid.txt', 'r') as f:
-        for line in f:
-            rsid, chr_pos_tuple = dbsnp.process_chr_pos_rsid_line(line)
-            rsid_and_chrpos[rsid] = chr_pos_tuple
-            if rsid in all_new_to_old_rsids:
-                for old_rsid in all_new_to_old_rsids[rsid]:
-                    rsid_and_chrpos[old_rsid] = chr_pos_tuple
-                    count_old += 1
-            count += 1
-            if count % batch_size == 0 or count == n_lines:
-                print(count // batch_size, dbsnp.timer_lap())
-                dbsnp.bulk_index(rsid_and_chrpos)
-                rsid_and_chrpos = {}
-                print('batch ending at line', count, count_old, dbsnp.timer_lap(), "\n")
+    queue = Queue()
+    n_consumers = 16
 
-    # dbsnp.refresh_index()
-    # dbsnp.timer_lap()
+    def producer(queue, n_consumers):
+        count = 0
+        count_old = 0
+        batch_size = 1_000_000
+        rsid_and_chrpos = {}
+        n_lines = 1145968637
+        with open(wd + '/chr_pos_rsid.txt', 'r') as f:
+            for line in f:
+                rsid, chr_pos_tuple = dbsnp.process_chr_pos_rsid_line(line)
+                rsid_and_chrpos[rsid] = chr_pos_tuple
+                if rsid in all_new_to_old_rsids:
+                    for old_rsid in all_new_to_old_rsids[rsid]:
+                        rsid_and_chrpos[old_rsid] = chr_pos_tuple
+                        count_old += 1
+                count += 1
+                if count % batch_size == 0 or count == n_lines:
+                    batch_number = count // batch_size
+                    with open(wd + f'/pickle/{batch_number}', 'wb') as f:
+                        pickle.dump(rsid_and_chrpos, f)
+                    queue.put(batch_number)
+                    rsid_and_chrpos = {}
+                    print(f"Batch {batch_number} added for line ending {count} with accumulated merger {count_old} in {dbsnp.timer_lap()}")
+        for _ in range(n_consumers):
+            queue.put(None)
 
-    # count = 0
-    # batch_size = 10_000
-    # old_to_new_rsids = {}
-    # new_rsids = []
-    # rsid_and_chrpos = {}
-    # n_lines = 11963907
-    # with open(wd + '/merged.txt', 'r') as f:
-    #     for line in f:
-    #         old_rsid, new_rsid = dbsnp.process_merged_line(line)
-    #         old_to_new_rsids[old_rsid] = new_rsid
-    #         new_rsids.append(new_rsid)
-    #         count += 1
-    #         if count % batch_size == 0 or count == n_lines:
-    #             print(count // batch_size, dbsnp.timer_lap())
-    #             chr_pos_of_new_rsids = dbsnp.mget(new_rsids)
-    #             print(len(chr_pos_of_new_rsids), dbsnp.timer_lap())
-    #             for old_rsid in old_to_new_rsids.keys():
-    #                 new_rsid = old_to_new_rsids[old_rsid]
-    #                 if new_rsid in chr_pos_of_new_rsids:
-    #                     rsid_and_chrpos[old_rsid] = chr_pos_of_new_rsids[new_rsid]
-    #             print(len(rsid_and_chrpos), dbsnp.timer_lap())
-    #             dbsnp.bulk_index(rsid_and_chrpos)
-    #             old_to_new_rsids = {}
-    #             new_rsids = []
-    #             rsid_and_chrpos = {}
-    #             print('batch ending at line', count, dbsnp.timer_lap(), "\n")
+    def consumer(consumer_id, queue):
+        while True:
+            batch_number = queue.get()
+            if batch_number is None:
+                break
+            t = time.time()
+            with open(wd + f'/pickle/{batch_number}', 'rb') as f:
+                rsid_and_chrpos = pickle.load(f)
+            print(f"Starting batch {batch_number}")
+            dbsnp.bulk_index(rsid_and_chrpos)
+            print(f"Batch {batch_number} processed by consumer {consumer_id} with length {len(rsid_and_chrpos)} in {round(time.time() - t, 4)}")
+
+    producer_process = Process(target=producer, args=(queue, n_consumers))
+    producer_process.start()
+
+    consumer_processes = []
+    for i in range(n_consumers):
+        cp = Process(target=consumer, args=(i + 1, queue))
+        cp.start()
+        consumer_processes.append(cp)
+
+    for cp in consumer_processes:
+        cp.join()
