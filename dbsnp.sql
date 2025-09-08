@@ -1,3 +1,5 @@
+create schema opengwas;
+
 create table if not exists opengwas.dbsnp
 (
     id     bigint unsigned auto_increment,
