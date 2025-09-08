@@ -153,7 +153,7 @@ docker run -d \
   --name og-dbsnp-es \
   -p 19200:9200 \
   -p 19300:9300 \
-  --network opengwas-api_opengwas-ieu-db \
+  --network opengwas-api_og-dbsnp \
   -e "discovery.type=single-node" \
   -e "path.repo=/mnt/repo" \
   -v /data/opengwas-dbsnp-import/elasticsearch/data:/usr/share/elasticsearch/data \
@@ -164,7 +164,7 @@ docker run -d \
 docker run -d \
   --name og-dbsnp-es-kibana \
   -p 15601:5601 \
-  --network opengwas-api_opengwas-ieu-db \
+  --network opengwas-api_og-dbsnp \
   -e ELASTICSEARCH_HOSTS=http://og-dbsnp-es:9200 \
   kibana:7.13.4
 ```
@@ -173,6 +173,7 @@ Set up (MySQL)
 ```shell
 docker run -d
  --name og-dbsnp-mysql
+ --network opengwas-api_og-dbsnp
  --env-file .env
  -p 13306:3306
  -v /data/opengwas-dbsnp-import/mysql:/var/lib/mysql
@@ -185,7 +186,7 @@ docker build -t opengwas-dbsnp-import .
 
 docker run -d \
   --name og-dbsnp-import \
-  --network opengwas-api_opengwas-ieu-db \
+  --network opengwas-api_og-dbsnp \
   -v /data/opengwas-dbsnp-import:/opengwas-dbsnp-import \
   opengwas-dbsnp-import
 
