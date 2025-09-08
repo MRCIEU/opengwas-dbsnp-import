@@ -147,6 +147,12 @@ e.g. rs34183431 has been merged to rs10710027, so when the users give rs34183431
 
 ### Run the script (Elasticsearch)
 
+
+Set up network
+```shell
+docker network create opengwas-api_og-dbsnp
+```
+
 Set up (Elasticsearch)
 ```shell
 docker run -d \
@@ -171,12 +177,12 @@ docker run -d \
 
 Set up (MySQL)
 ```shell
-docker run -d
- --name og-dbsnp-mysql
- --network opengwas-api_og-dbsnp
- --env-file .env
- -p 13306:3306
- -v /data/opengwas-dbsnp-import/mysql:/var/lib/mysql
+docker run -d \
+ --name og-dbsnp-mysql \
+ --network opengwas-api_og-dbsnp \
+ --env-file .env \
+ -p 13306:3306 \
+ -v /data/opengwas-dbsnp-import/mysql:/var/lib/mysql \
  mysql:8.0.42
 ```
 
