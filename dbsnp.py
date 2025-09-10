@@ -1,176 +1,76 @@
-import mysql.connector
+#!/usr/bin/env python3
 import os
+import sys
 import time
-import pickle
 
-from collections import defaultdict
-from multiprocessing import Queue, Process
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python dbsnp.py /path/to/dbsnp_dir [batch_size]")
+        sys.exit(1)
 
-from dotenv import load_dotenv
-from elasticsearch import Elasticsearch
-from elasticsearch.exceptions import SerializationError
-from retrying import retry
+    wd = sys.argv[1]
+    batch_size = int(sys.argv[2]) if len(sys.argv) > 2 else 10_000_000
 
-load_dotenv()
+    os.chdir(wd)
 
+    output_file = "dbsnp.csv"
+    if os.path.exists(output_file):
+        os.remove(output_file)
 
-class DBSNP:
-    def __init__(self, es_index: str):
-        _env = os.environ['ENV']
-        # self.es = Elasticsearch([f"http://elastic:{os.environ['ES_PASS']}@{os.environ['ES_HOST_' + _env]}:{os.environ['ES_PORT_' + _env]}"], verify_certs=False)
-        # self.es_index = es_index
-        self.mysql_config = {
-            'host': os.environ['MYSQL_HOST_' + _env],
-            'port': os.environ['MYSQL_PORT_' + _env],
-            'user': os.environ['MYSQL_USER_' + _env],
-            'password': os.environ['MYSQL_PASS_' + _env],
-            'database': os.environ['MYSQL_DB_' + _env],
-            'connection_timeout': 30,
-        }
+    merged_file = "merged.txt"
+    main_file = "chr_pos_rsid.txt"
 
-        self.last_time = time.time()
-
-    def create_index(self):
-        if not self.es.indices.exists(index=self.es_index):
-            self.es.indices.create(index=self.es_index, body={
-                "settings": {
-                    "number_of_replicas": 0,
-                    "refresh_interval": -1,
-                    "index.max_result_window": 10000000
-                },
-                "mappings": {
-                    "properties": {
-                        "CHR": {
-                            "type": "keyword"
-                        },
-                        "POS": {
-                            "type": "long"
-                        }
-                    }
-                }
-            })
-        else:
-            print("Using existing index")
-
-    def refresh_index(self):
-        self.es.indices.refresh(index=self.es_index)
-
-    def _build_insert_body(self, rsid_and_chrpos: dict):
-        body = []
-        for rsid, chrpos in rsid_and_chrpos.items():
-            body.append(f'{{"index": {{"_id": "{rsid}"}}}}')
-            body.append(f'{{"CHR": {chrpos[0]}, "POS": {chrpos[1]}}}')
-        return "\n".join(body)
-
-    @retry(wait_fixed=10000)
-    def bulk_index(self, rsid_and_chrpos: dict):
-        try:
-            return self.es.bulk(request_timeout=600, index=self.es_index, body=self._build_insert_body(rsid_and_chrpos))
-        except SerializationError as e:
-            pass
-
-    def bulk_insert(self, rsid_and_chrpos: dict, mysql_conn: mysql.connector.connect()):
-        cursor = mysql_conn.cursor()
-
-        rows = []
-        for rsid, chrpos in rsid_and_chrpos.items():
-            rows.append([{'X': 23, 'Y': 24, 'MT': 25}.get(chrpos[0], chrpos[0]), chrpos[1], rsid.removeprefix('rs')])
-
-        sql = "INSERT INTO dbsnp (chr_id, pos, rsid) VALUES (%s, %s, %s)"
-        cursor.executemany(sql, rows)
-        mysql_conn.commit()
-
-    def parse_chr_pos_rsid_line(self, line: str) -> tuple:
-        parts = line.rstrip('\n').split()
-        return parts[2], (parts[0], parts[1])
-
-    def parse_merged_line(self, line: str) -> tuple:
-        parts = line.rstrip('\n').split()
-        return f"rs{parts[0]}", f"rs{parts[1]}"
-
-    def timer_lap(self):
-        current_time = time.time()
-        elapsed_time = current_time - self.last_time
-        self.last_time = current_time
-        return round(elapsed_time, 4)
-
-
-def producer(queue, n_consumers, wd, dbsnp, all_original_to_alias_rsids):
-    count = 0
-    count_alias = 0
-    batch_size = 1_000_000
-    rsid_and_chrpos = {}
-    n_lines = 1172651987
-    with open(wd + '/chr_pos_rsid.txt', 'r') as f:
+    # --- Step 1: Load merged.txt ---
+    print("Loading merged.txt ...")
+    start_load = time.time()
+    all_original_to_alias_rsids = {}
+    with open(merged_file) as f:
         for line in f:
-            rsid, chr_pos_tuple = dbsnp.parse_chr_pos_rsid_line(line)
-            rsid_and_chrpos[rsid] = chr_pos_tuple
-            if rsid in all_original_to_alias_rsids:
-                for alias_rsid in all_original_to_alias_rsids[rsid]:
-                    rsid_and_chrpos[alias_rsid] = chr_pos_tuple
-                    count_alias += 1
-            count += 1
-            if count % batch_size == 0 or count == n_lines:
-                batch_number = count // batch_size
-                with open(wd + f'/pickle/{batch_number}', 'wb') as f:
-                    pickle.dump(rsid_and_chrpos, f)
-                queue.put(batch_number)
-                rsid_and_chrpos = {}
-                print(f"Batch {batch_number} added for line ending {count} with accumulated merger {count_alias} in {dbsnp.timer_lap()}")
-    for _ in range(n_consumers):
-        queue.put(None)
+            alias, original = line.strip().split()
+            all_original_to_alias_rsids.setdefault(original, []).append(alias)
+    end_load = time.time()
+    print(f"original_to_alias generated in {end_load - start_load:.2f} seconds")
+
+    # --- Step 2: Process main file ---
+    seq = 0
+    line_count = 0
+    batch_count = 0
+    batch_start_time = time.time()
+
+    with open(main_file) as infile, open(output_file, "w") as outfile:
+        for line in infile:
+            chr_str, pos, rsid_str = line.strip().split()
+            rsid_num = rsid_str[2:]
+
+            # chr mapping
+            chr_num = {'X': 23, 'Y': 24, 'MT': 25}.get(chr_str, chr_str)
+
+            # original rsid
+            seq += 1
+            outfile.write(f"{seq},{chr_num},{pos},{rsid_num}\n")
+
+            # alias rsids if exist
+            for alias in all_original_to_alias_rsids.get(rsid_num, []):
+                seq += 1
+                outfile.write(f"{seq},{chr_num},{pos},{alias}\n")
+
+            line_count += 1
+            if line_count % batch_size == 0:
+                batch_count += 1
+                now = time.time()
+                elapsed = now - batch_start_time
+                print(f"Processed batch {batch_count}, elapsed {elapsed:.1f} seconds")
+                batch_start_time = time.time()
+
+    # Check for final batch
+    if line_count % batch_size != 0:
+        batch_count += 1
+        elapsed = time.time() - batch_start_time
+        print(f"Processed batch {batch_count}, elapsed {elapsed:.1f} seconds")
+
+    total_elapsed = time.time() - start_load
+    print(f"All done. Total elapsed time: {total_elapsed:.1f} seconds")
 
 
-def consumer(consumer_id, queue, wd, dbsnp):
-    mysql_conn = mysql.connector.connect(**dbsnp.mysql_config)
-    while True:
-        batch_number = queue.get()
-        if batch_number is None:
-            break
-        t = time.time()
-        with open(wd + f'/pickle/{batch_number}', 'rb') as f:
-            rsid_and_chrpos = pickle.load(f)
-        print(f"Starting batch {batch_number}")
-        # dbsnp.bulk_index(rsid_and_chrpos)  # ES
-        dbsnp.bulk_insert(rsid_and_chrpos, mysql_conn)  # MySQL
-        print(f"Batch {batch_number} processed by consumer {consumer_id} with length {len(rsid_and_chrpos)} in {round(time.time() - t, 4)}")
-
-
-if __name__ == '__main__':
-    wd = os.environ['WORKING_DIR']
-    dbsnp = DBSNP('dbsnp-157')
-
-    # ES
-    # dbsnp.create_index()
-
-    # MySQL
-    mysql_conn = mysql.connector.connect(**dbsnp.mysql_config)
-
-    dbsnp.timer_lap()
-
-    os.makedirs(wd + '/pickle', exist_ok=True)
-
-    all_original_to_alias_rsids = defaultdict(list)
-    with open(wd + '/merged.txt', 'r') as f:
-        lines = f.readlines()
-        print(len(lines), dbsnp.timer_lap())
-        for line in lines:
-            alias_rsid, original_rsid = dbsnp.parse_merged_line(line)
-            all_original_to_alias_rsids[original_rsid].append(alias_rsid)
-
-    print(len(all_original_to_alias_rsids), dbsnp.timer_lap(), "\n")
-
-    queue = Queue()
-    n_consumers = 32
-
-    producer_process = Process(target=producer, args=(queue, n_consumers, wd, dbsnp, all_original_to_alias_rsids))
-    producer_process.start()
-
-    consumer_processes = []
-    for i in range(n_consumers):
-        cp = Process(target=consumer, args=(i + 1, queue, wd, dbsnp))
-        cp.start()
-        consumer_processes.append(cp)
-
-    for cp in consumer_processes:
-        cp.join()
+if __name__ == "__main__":
+    main()

@@ -145,124 +145,50 @@ gunzip -c RsMergeArch.bcp.gz | awk '{print $1, $2}' > merged.txt
 
 e.g. rs34183431 has been merged to rs10710027, so when the users give rs34183431 (alias) they should be redirected to rs10710027 (original)
 
-### Run the script (Elasticsearch)
-
-
-Set up network
-```shell
-docker network create opengwas-api_og-dbsnp
-```
-
-Set up (Elasticsearch)
-```shell
-docker run -d \
-  --name og-dbsnp-es \
-  -p 19200:9200 \
-  -p 19300:9300 \
-  --network opengwas-api_og-dbsnp \
-  -e "discovery.type=single-node" \
-  -e "path.repo=/mnt/repo" \
-  -v /data/opengwas-dbsnp-import/elasticsearch/data:/usr/share/elasticsearch/data \
-  -v /data/opengwas-dbsnp-import/elasticsearch/logs:/usr/share/elasticsearch/logs \
-  -v /data/opengwas-dbsnp-import/elasticsearch/repo:/mnt/repo \
-  elasticsearch:7.13.4
-  
-docker run -d \
-  --name og-dbsnp-es-kibana \
-  -p 15601:5601 \
-  --network opengwas-api_og-dbsnp \
-  -e ELASTICSEARCH_HOSTS=http://og-dbsnp-es:9200 \
-  kibana:7.13.4
-```
-
-Set up (MySQL)
-```shell
-docker run -d \
- --name og-dbsnp-mysql \
- --network opengwas-api_og-dbsnp \
- --env-file .env \
- -p 13306:3306 \
- -v /data/opengwas-dbsnp-import/mysql:/var/lib/mysql \
- mysql:8.0.42
-```
-
-Run the script
-```shell
-docker build -t opengwas-dbsnp-import .
-
-docker run -d \
-  --name og-dbsnp-import \
-  --network opengwas-api_og-dbsnp \
-  -v /data/opengwas-dbsnp-import:/opengwas-dbsnp-import \
-  opengwas-dbsnp-import
-
-tmux
-
-docker exec -it og-dbsnp-import /bin/sh
-
-cd opengwas-dbsnp-import
-
-python -u dbsnp.py 2>&1 | tee -a dbsnp.log
-```
-
-
-Results (Elasticsearch)
+### Run the script
 
 ```shell
-> cat chr_pos_rsid.txt | wc -l
-1172651987
-> cat merged.txt | wc -l
-11963907
+python dbsnp.py /path/to/dbsnp_dir [batch_size]
 ```
 
-```http request
-GET dbsnp-157/_flush
+`/path/to/dbsnp_dir` is where you put `chr_pos_rsid.txt` and `merged.txt`. `[batch_size]` is optional, default to 10000000.
 
-GET dbsnp-157/_refresh
+This will generate `dbsnp.csv` in less than 30 minutes:
 
-GET dbsnp-157/_count
-```
-```
-{
-  "count" : 1105824027,
-  "_shards" : {
-    "total" : 1,
-    "successful" : 1,
-    "skipped" : 0,
-    "failed" : 0
-  }
-}
-```
-
-### Create snapshot and transfer
-
-Create repository
-```http request
-PUT _snapshot/backup
-{
-  "type": "fs",
-  "settings": {
-    "location": "/mnt/repo"
-  },
-  "compress": true
-}
+```shell
+> head dbsnp.csv
+1,1,10001,1570391677
+2,1,10002,1570391692
+3,1,10003,1570391694
+4,1,10007,1639538116
+5,1,10008,1570391698
+6,1,10009,1570391702
+7,1,10013,1639538192
+8,1,10013,1639538231
+9,1,10014,1639538207
+10,1,10015,1570391706
 ```
 
-Create snapshot
-```http request
-PUT _snapshot/backup/dbsnp-157
-{
-  "indices": ["dbsnp-157"],
-  "include_global_state": false
-}
+Upload this file to MySQL server under `/var/lib/mysql-files/`. Open a `tmux` session, connect to the instance. Create schema and table using `dbsnp.sql`, then
 
-GET _snapshot/_status
+```sql
+LOAD DATA INFILE '/var/lib/mysql-files/dbsnp.csv' into table dbsnp FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
 ```
 
-Restore on target cluster
-```http request
-POST _snapshot/backup/dbsnp-157/_restore
-{
-  "indices": "dbsnp-157"
-}
 ```
+Query OK, 1182579974 rows affected (2 hours 6 min 11.61 sec)
+Records: 1182579974  Deleted: 0  Skipped: 0  Warnings: 0
+```
+
+Then create index:
+
+```sql
+CREATE INDEX dbsnp_rsid_index ON dbsnp(rsid);
+```
+
+```
+Query OK, 0 rows affected (6 hours 4 min 57.86 sec)
+Records: 0  Duplicates: 0  Warnings: 0
+```
+
+TODO: Use `primary key (rsid, id)`? This will also serve as an index on rsid.

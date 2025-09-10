@@ -12,17 +12,23 @@ create table if not exists opengwas.dbsnp
     partition by hash ( rsid ) partitions 32
 ;
 
-
-#
+-- Disable binary logging and InnoDB redo log for faster bulk loading
 ALTER INSTANCE DISABLE INNODB REDO_LOG;
 
-#
-show variables like '%max_connections%';
-set global max_connections = 500;
+SET autocommit = 0;
+SET foreign_key_checks = 0;
+SET unique_checks = 0;
+SET GLOBAL innodb_flush_log_at_trx_commit = 2;
+SET GLOBAL sync_binlog = 0;
+SET sql_log_bin = 0;
 
-show status like  'Threads%';
+-- Load data from CSV file into dbsnp table
+LOAD DATA INFILE '/var/lib/mysql-files/dbsnp.csv' into table dbsnp FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
 
-# Check number of records in total in dbsnp
+-- Create index on rsid
+CREATE INDEX dbsnp_rsid_index ON dbsnp(rsid);
+
+-- Check number of records in total in dbsnp
 SELECT
     sum(TABLE_ROWS)
 FROM
@@ -31,8 +37,7 @@ WHERE
     TABLE_SCHEMA = 'opengwas'
     AND TABLE_NAME = 'dbsnp';
 
-
-# Check number of records by partitions in dbsnp
+-- Check number of records by partitions in dbsnp
 SELECT
     PARTITION_NAME,
     TABLE_ROWS
@@ -41,3 +46,13 @@ FROM
 WHERE
     TABLE_SCHEMA = 'opengwas'
     AND TABLE_NAME = 'dbsnp';
+
+-- Re-enable binary logging and InnoDB redo log
+ALTER INSTANCE ENABLE INNODB REDO_LOG;
+
+SET autocommit = 1;
+SET foreign_key_checks = 1;
+SET unique_checks = 1;
+SET GLOBAL innodb_flush_log_at_trx_commit = 1;
+SET GLOBAL sync_binlog = 1;
+SET sql_log_bin = 1;
