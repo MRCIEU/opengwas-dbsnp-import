@@ -172,7 +172,7 @@ This will generate `dbsnp.csv` in less than 30 minutes:
 Upload this file to MySQL server under `/var/lib/mysql-files/`. Open a `tmux` session, connect to the instance. Create schema and table using `dbsnp.sql`, then
 
 ```sql
-LOAD DATA INFILE '/var/lib/mysql-files/dbsnp.csv' into table dbsnp FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
+LOAD DATA INFILE '/var/lib/mysql-files/dbsnp.csv' into table dbsnp FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n' (chr_id, pos, rsid);
 ```
 
 ```

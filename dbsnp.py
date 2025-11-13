@@ -32,7 +32,6 @@ def main():
     print(f"original_to_alias generated in {end_load - start_load:.2f} seconds")
 
     # --- Step 2: Process main file ---
-    seq = 0
     line_count = 0
     batch_count = 0
     batch_start_time = time.time()
@@ -46,13 +45,11 @@ def main():
             chr_num = {'X': 23, 'Y': 24, 'MT': 25}.get(chr_str, chr_str)
 
             # original rsid
-            seq += 1
-            outfile.write(f"{seq},{chr_num},{pos},{rsid_num}\n")
+            outfile.write(f"{chr_num},{pos},{rsid_num}\n")
 
             # alias rsids if exist
             for alias in all_original_to_alias_rsids.get(rsid_num, []):
-                seq += 1
-                outfile.write(f"{seq},{chr_num},{pos},{alias}\n")
+                outfile.write(f"{chr_num},{pos},{alias}\n")
 
             line_count += 1
             if line_count % batch_size == 0:
