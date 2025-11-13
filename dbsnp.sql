@@ -29,6 +29,8 @@ LOAD DATA INFILE '/var/lib/mysql-files/dbsnp.csv' into table dbsnp FIELDS TERMIN
 CREATE INDEX dbsnp_rsid_index ON dbsnp(rsid);
 
 -- Check number of records in total in dbsnp
+ANALYZE TABLE opengwas.dbsnp;
+
 SELECT
     sum(TABLE_ROWS)
 FROM

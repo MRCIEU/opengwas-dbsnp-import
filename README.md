@@ -191,4 +191,13 @@ Query OK, 0 rows affected (6 hours 4 min 57.86 sec)
 Records: 0  Duplicates: 0  Warnings: 0
 ```
 
-TODO: Use `primary key (rsid, id)`? This will also serve as an index on rsid.
+`ls -lSh | grep dnsnp` can be used to check for progress.
+
+### Notes
+
+- Why don't just use `primary key (rsid)`?
+  - Some rsid may map to multiple locations. E.g. in b37, rs2267 will be at 23:1935021 and 24:1885021
+- Why don't just use `primary key (id)`?
+  - "Every unique key on the table must use every column in the table's partitioning expression". https://dev.mysql.com/doc/refman/8.0/en/partitioning-limitations-partitioning-keys-unique-keys.html
+- Why don't use `primary key (rsid, id)`?
+  - "To use the AUTO_INCREMENT mechanism with an InnoDB table, an AUTO_INCREMENT column must be defined as the first or only column of some index ..." https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
